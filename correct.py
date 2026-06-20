@@ -2,6 +2,8 @@ import sys
 import os
 import subprocess
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import cv2
 import math
@@ -308,6 +310,26 @@ def mux_audio(corrected_video_path, original_video_path, output_path):
 
     return True
 
+def mux_audio_async(corrected_video_path, original_video_path, output_path):
+    """Run mux_audio on a background thread.
+
+    ffmpeg can take a while, and the GUI runs a single-threaded event loop, so
+    calling mux_audio() directly would freeze the window. Returning a Future
+    lets the caller keep yielding control back to the event loop (so the window
+    stays responsive) and apply the result once the work is finished.
+
+    The returned ThreadPoolExecutor is shut down (without waiting) once the
+    future completes, so the caller only needs to track the future.
+    """
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(
+        mux_audio, corrected_video_path, original_video_path, output_path
+    )
+    # Release the worker thread as soon as the job is done; cancel_futures is
+    # unnecessary because the single submitted task is the one we are awaiting.
+    future.add_done_callback(lambda _f: executor.shutdown(wait=False))
+    return future
+
 def process_video(video_data, yield_preview=False):
     cap = cv2.VideoCapture(video_data["input_video_path"])
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -381,18 +403,31 @@ def process_video(video_data, yield_preview=False):
         cap.release()
         new_video.release()
 
-        # Surface a status update before muxing. The GUI advances this generator
-        # one frame at a time, so without this the synchronous ffmpeg call would
-        # run during the final next() with no feedback while the UI is blocked.
-        if yield_preview:
-            yield "Muxing audio...", None
-        else:
-            yield None
+        # Mux the original audio back into the corrected video on a background
+        # thread. ffmpeg is blocking, so running it inline would freeze the
+        # single-threaded GUI event loop. Instead we kick it off asynchronously
+        # and keep yielding control back to the caller (the GUI advances this
+        # generator one step per loop iteration), so the window stays responsive
+        # while ffmpeg runs. If muxing is not possible (no ffmpeg, no audio
+        # track, or an ffmpeg error) we fall back to the video-only file.
+        mux_future = mux_audio_async(
+            temp_video_path, video_data["input_video_path"], output_video_path
+        )
 
-        # Mux the original audio back into the corrected video. If that is not
-        # possible (no ffmpeg, no audio track, or an ffmpeg error), fall back to
-        # the video-only file.
-        if mux_audio(temp_video_path, video_data["input_video_path"], output_video_path):
+        mux_started_at = time.monotonic()
+        while not mux_future.done():
+            if yield_preview:
+                elapsed = int(time.monotonic() - mux_started_at)
+                # Animate the status so it is obvious the app is still alive.
+                dots = "." * (1 + elapsed % 3)
+                yield "Muxing audio{} ({}s)".format(dots, elapsed), None
+            else:
+                yield None
+            # Yield the GIL briefly so the worker thread makes progress and we
+            # do not spin too tightly between event-loop iterations.
+            time.sleep(0.05)
+
+        if mux_future.result():
             os.remove(temp_video_path)
         else:
             os.replace(temp_video_path, output_video_path)
