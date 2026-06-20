@@ -7,6 +7,8 @@ bundled static-ffmpeg package, so no system-wide ffmpeg installation is needed.
 
 import os
 import subprocess
+import sys
+import types
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -137,6 +139,68 @@ def test_mux_audio_returns_false_when_ffmpeg_unavailable(tmp_path, monkeypatch):
         str(tmp_path / "output.mp4"),
     )
     assert result is False
+
+
+def test_ensure_ffmpeg_available_forwards_progress_callback(monkeypatch):
+    chunks = [b"a" * 100, b"b" * 50]
+
+    class _FakeResponse:
+        headers = {"content-length": "150"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, chunk_size):
+            return iter(chunks)
+
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResponse())
+
+    class _FakeRun:
+        download_file = staticmethod(lambda url, local_path: local_path)
+
+        @staticmethod
+        def get_or_fetch_platform_executables_else_raise():
+            # Simulate the library invoking its (now patched) downloader.
+            _FakeRun.download_file("http://example/ffmpeg.zip", os.devnull)
+            return ("ffmpeg", "ffprobe")
+
+    original_download = _FakeRun.download_file
+    fake_static_ffmpeg = types.ModuleType("static_ffmpeg")
+    fake_static_ffmpeg.run = _FakeRun
+    monkeypatch.setitem(sys.modules, "static_ffmpeg", fake_static_ffmpeg)
+    monkeypatch.setattr(correct, "_FFMPEG_EXECUTABLES", None)
+
+    calls = []
+    error = correct.ensure_ffmpeg_available(progress_callback=lambda d, t: calls.append((d, t)))
+
+    assert error is None
+    # The downloader streamed the file and reported byte progress.
+    assert calls == [(0, 150), (100, 150), (150, 150)]
+    # The original download_file must be restored after the call.
+    assert _FakeRun.download_file is original_download
+
+
+def test_ensure_ffmpeg_available_returns_error_message(monkeypatch):
+    class _FailingRun:
+        @staticmethod
+        def get_or_fetch_platform_executables_else_raise():
+            raise RuntimeError("network blocked")
+
+    fake_static_ffmpeg = types.ModuleType("static_ffmpeg")
+    fake_static_ffmpeg.run = _FailingRun
+    monkeypatch.setitem(sys.modules, "static_ffmpeg", fake_static_ffmpeg)
+    monkeypatch.setattr(correct, "_FFMPEG_EXECUTABLES", None)
+
+    error = correct.ensure_ffmpeg_available()
+    assert error == "network blocked"
+
 
 
 class ProcessVideoTests(unittest.TestCase):

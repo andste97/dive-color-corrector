@@ -1,6 +1,6 @@
 import PySimpleGUI as sg
 import os
-from correct import correct_image, analyze_video, process_video
+from correct import correct_image, analyze_video, process_video, ensure_ffmpeg_available
 import webbrowser
 from logo.logo import LOGO
 
@@ -110,6 +110,37 @@ process_video_generator = None
 
 
 if __name__ == "__main__":
+
+    # Download/locate the bundled ffmpeg binaries up front so the user is told
+    # immediately if it fails, instead of silently losing audio when muxing.
+    # When a download is needed, show a progress meter so the user knows the app
+    # is fetching ffmpeg and how far along it is.
+    def report_ffmpeg_download(downloaded, total):
+        mb = 1024 * 1024
+        # Keep the meter open while the size is unknown (total == 0).
+        maximum = total if total > 0 else downloaded + 1
+        sg.one_line_progress_meter(
+            "Preparing ffmpeg",
+            downloaded, maximum,
+            "Downloading ffmpeg (needed to keep audio in videos)...",
+            "{:.1f} MB / {:.1f} MB".format(downloaded / mb, total / mb) if total > 0
+            else "{:.1f} MB".format(downloaded / mb),
+            key="__FFMPEG_DL__",
+            orientation="h",
+        )
+
+    ffmpeg_error = ensure_ffmpeg_available(progress_callback=report_ffmpeg_download)
+    sg.one_line_progress_meter_cancel("__FFMPEG_DL__")
+
+    if ffmpeg_error:
+        sg.popup_error(
+            "Could not prepare ffmpeg, which is needed to keep the audio track "
+            "in corrected videos.\n\n"
+            "Videos will still be color corrected, but the output may have no "
+            "audio.\n\n"
+            "Details: {}".format(ffmpeg_error),
+            title="ffmpeg setup failed",
+        )
 
     while True:
         
