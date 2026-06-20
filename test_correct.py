@@ -47,18 +47,17 @@ def test_get_filter_matrix_uses_float_average(monkeypatch):
 def test_float_average_changes_hue_search_outcome():
     # Demonstrate that uint8 truncation of the average could change the hue
     # shift selected by the search, and that the float version is more precise.
+    import cv2
+
     img = _solid_image(20, 128, 118)
+    img[:, : img.shape[1] // 4, 0] = 23  # nudge the red mean off an integer
 
     def hue_shift_for(avg_dtype):
-        mat = img.copy()
-        avg_mat = np.array([np.float64(v) for v in (img[..., 0].mean(),
-                                                    img[..., 1].mean(),
-                                                    img[..., 2].mean())])
-        avg_mat = avg_mat.astype(avg_dtype)
+        avg_mat = np.array(cv2.mean(img)[:3], dtype=avg_dtype)
         new_avg_r = avg_mat[0]
         hue_shift = 0
         while new_avg_r < correct.MIN_AVG_RED:
-            shifted = correct.hue_shift_red(avg_mat.astype(np.float64), hue_shift)
+            shifted = correct.hue_shift_red(avg_mat, hue_shift)
             new_avg_r = np.sum(shifted)
             hue_shift += 1
             if hue_shift > correct.MAX_HUE_SHIFT:
