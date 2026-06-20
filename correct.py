@@ -276,13 +276,15 @@ def mux_audio(corrected_video_path, original_video_path, output_path):
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            timeout=120,
         )
-    except OSError as error:
+    except (OSError, subprocess.TimeoutExpired) as error:
         print("Failed to run ffmpeg ({}); output video will not contain audio.".format(error))
         return False
 
     if result.returncode != 0:
-        print("ffmpeg failed to mux audio; output video will not contain audio.")
+        err = result.stderr.decode("utf-8", errors="replace").strip()
+        print(f"ffmpeg failed to mux audio (exit {result.returncode}): {err}")
         return False
 
     return True
