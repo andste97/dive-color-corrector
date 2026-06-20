@@ -60,6 +60,17 @@ $ pyinstaller -n "Dive Color Corrector" -F -w -i ./logo/logo.png dcc.py
 
 Final builds will be available in 'dist' folder
 
+### Automated release builds
+Whenever a new version tag (e.g. `v1.0.0`) is pushed, the
+[`Release`](./.github/workflows/release.yml) GitHub Actions workflow bundles the
+app for Windows, macOS and Linux with PyInstaller and attaches the executables
+to a GitHub Release.
+
+```
+$ git tag v1.0.0
+$ git push origin v1.0.0
+```
+
 
 
 ### Share
