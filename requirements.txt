@@ -3,9 +3,6 @@ numpy
 pillow
 static-ffmpeg
 
-# Testing
-# pytest
-
 # Uncomment the following for building GUI
 
 # py2app

@@ -27,6 +27,15 @@ $ python correct.py image /my/raw.png /my/corrected.png
 $ python correct.py video /my/raw.mp4 /my/corrected.mp4
 ```
 
+### Running the tests
+A unit test suite lives in the `tests/` directory and runs automatically on
+every push via GitHub Actions.
+
+```
+$ pip install -r requirements-dev.txt
+$ pytest
+```
+
 ## GUI
 You can either download the [desktop softwares](https://bornfree.github.io/dive-color-corrector/) or build one yourself.
 

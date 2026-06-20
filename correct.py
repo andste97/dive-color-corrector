@@ -326,6 +326,12 @@ def process_video(video_data, yield_preview=False):
     # Initialize VideoWriter
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     new_video = cv2.VideoWriter(temp_video_path, fourcc, fps, (frame_width, frame_height))
+    if not new_video.isOpened():
+        cap.release()
+        new_video.release()
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+        raise RuntimeError("Failed to open VideoWriter — check codec and output path")
 
     try:
         # Precompute interpolated filter matrices

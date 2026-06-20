@@ -7,6 +7,8 @@ bundled static-ffmpeg package, so no system-wide ffmpeg installation is needed.
 
 import os
 import subprocess
+import unittest
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -135,3 +137,32 @@ def test_mux_audio_returns_false_when_ffmpeg_unavailable(tmp_path, monkeypatch):
         str(tmp_path / "output.mp4"),
     )
     assert result is False
+
+
+class ProcessVideoTests(unittest.TestCase):
+    def test_process_video_raises_when_video_writer_fails_to_open(self):
+        mock_capture = MagicMock()
+        mock_capture.get.side_effect = [1920, 1080]
+        mock_writer = MagicMock()
+        mock_writer.isOpened.return_value = False
+        video_data = {
+            "input_video_path": "input.mp4",
+            "output_video_path": "output.mp4",
+            "fps": 30,
+            "frame_count": 1,
+            "filters": [[1.0]],
+            "filter_indices": [0],
+        }
+
+        with patch.object(correct.cv2, "VideoCapture", return_value=mock_capture), \
+             patch.object(correct.cv2, "VideoWriter_fourcc", return_value=1234), \
+             patch.object(correct.cv2, "VideoWriter", return_value=mock_writer):
+            with self.assertRaisesRegex(RuntimeError, r"Failed to open VideoWriter"):
+                list(correct.process_video(video_data))
+
+        mock_capture.release.assert_called()
+        mock_writer.release.assert_called()
+
+
+if __name__ == "__main__":
+    unittest.main()
