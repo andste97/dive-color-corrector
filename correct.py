@@ -237,7 +237,7 @@ def has_audio_stream(video_path):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30,
-    except OSError:
+    except OSError, subprocess.TimeoutExpired:
         return None
     if result.returncode != 0:
         return None
