@@ -14,6 +14,8 @@
 $ pip install -r requirements.txt
 ```
 
+> **Note:** To keep the original audio track in corrected videos, [ffmpeg](https://ffmpeg.org/) must be installed and available on your `PATH`. If ffmpeg is not found, the video is still corrected but the output will not contain audio.
+
 
 ### For images
 ```

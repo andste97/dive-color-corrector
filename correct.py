@@ -1,4 +1,8 @@
 import sys
+import os
+import shutil
+import subprocess
+import tempfile
 import numpy as np
 import cv2
 import math
@@ -212,6 +216,77 @@ def precompute_filter_matrices(frame_count, filter_indices, filter_matrices):
         interpolated_matrices[:, x] = np.interp(frame_numbers, filter_indices, filter_matrices[:, x])
     return interpolated_matrices
 
+def has_audio_stream(video_path):
+    """Detect whether the given video file contains an audio stream.
+
+    Returns True if an audio stream is found, False if none is found, and None
+    when it cannot be determined (e.g. ffprobe is not installed).
+    """
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                ffprobe, "-v", "error",
+                "-select_streams", "a",
+                "-show_entries", "stream=index",
+                "-of", "csv=p=0",
+                video_path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() != b""
+
+def mux_audio(corrected_video_path, original_video_path, output_path):
+    """Mux the audio track of the original video into the corrected (video-only) file.
+
+    Returns True if the audio was successfully muxed into output_path, False
+    otherwise. When False is returned the caller should fall back to using the
+    corrected (video-only) file as the output.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        print("ffmpeg not found; output video will not contain audio.")
+        return False
+
+    # Skip muxing only when we can positively confirm the source has no audio.
+    # When detection is unavailable, ffmpeg's optional "1:a?" mapping handles a
+    # missing audio track gracefully.
+    if has_audio_stream(original_video_path) is False:
+        return False
+
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg, "-y",
+                "-i", corrected_video_path,
+                "-i", original_video_path,
+                "-map", "0:v",
+                "-map", "1:a?",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-shortest",
+                output_path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as error:
+        print("Failed to run ffmpeg ({}); output video will not contain audio.".format(error))
+        return False
+
+    if result.returncode != 0:
+        print("ffmpeg failed to mux audio; output video will not contain audio.")
+        return False
+
+    return True
+
 def process_video(video_data, yield_preview=False):
     cap = cv2.VideoCapture(video_data["input_video_path"])
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -219,9 +294,17 @@ def process_video(video_data, yield_preview=False):
     fps = video_data["fps"]
     frame_count = video_data["frame_count"]
 
+    output_video_path = video_data["output_video_path"]
+
+    # Write corrected frames to a temporary file first. OpenCV's VideoWriter
+    # cannot carry audio, so the original audio is muxed back in afterwards.
+    output_dir = os.path.dirname(os.path.abspath(output_video_path))
+    temp_fd, temp_video_path = tempfile.mkstemp(suffix=".mp4", dir=output_dir)
+    os.close(temp_fd)
+
     # Initialize VideoWriter
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    new_video = cv2.VideoWriter(video_data["output_video_path"], fourcc, fps, (frame_width, frame_height))
+    new_video = cv2.VideoWriter(temp_video_path, fourcc, fps, (frame_width, frame_height))
 
     # Precompute interpolated filter matrices
     print("Precomputing filter matrices...")
@@ -271,6 +354,14 @@ def process_video(video_data, yield_preview=False):
 
     cap.release()
     new_video.release()
+
+    # Mux the original audio back into the corrected video. If that is not
+    # possible (no ffmpeg, no audio track, or an ffmpeg error), fall back to the
+    # video-only file.
+    if mux_audio(temp_video_path, video_data["input_video_path"], output_video_path):
+        os.remove(temp_video_path)
+    else:
+        os.replace(temp_video_path, output_video_path)
 
 
 if __name__ == "__main__":
