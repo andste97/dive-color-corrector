@@ -14,6 +14,8 @@
 $ pip install -r requirements.txt
 ```
 
+> **Note:** The original audio track is kept in corrected videos using [ffmpeg](https://ffmpeg.org/), which is bundled automatically via the `static-ffmpeg` package (downloaded and cached on first use) — no system-wide ffmpeg installation is required. If the bundled ffmpeg cannot be obtained, the video is still corrected but the output will not contain audio.
+
 
 ### For images
 ```

@@ -1,6 +1,7 @@
 opencv-python
 numpy
 pillow
+static-ffmpeg
 
 # Uncomment the following for building GUI
 
