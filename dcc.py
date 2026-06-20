@@ -200,9 +200,12 @@ if __name__ == "__main__":
         if process_video_generator:
             try:
                 percent, preview = next(process_video_generator)
-                window["__PREVIEW__"](data=preview)
-                status_message = "Processing: {:.2f} %".format(percent)
-                window["__STATUS__"].update(status_message)
+                if isinstance(percent, str):
+                    window["__STATUS__"].update(percent)
+                else:
+                    window["__PREVIEW__"](data=preview)
+                    status_message = "Processing: {:.2f} %".format(percent)
+                    window["__STATUS__"].update(status_message)
 
             except StopIteration:
                 window["__STATUS__"].update("Processing done")

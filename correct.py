@@ -381,6 +381,14 @@ def process_video(video_data, yield_preview=False):
         cap.release()
         new_video.release()
 
+        # Surface a status update before muxing. The GUI advances this generator
+        # one frame at a time, so without this the synchronous ffmpeg call would
+        # run during the final next() with no feedback while the UI is blocked.
+        if yield_preview:
+            yield "Muxing audio...", None
+        else:
+            yield None
+
         # Mux the original audio back into the corrected video. If that is not
         # possible (no ffmpeg, no audio track, or an ffmpeg error), fall back to
         # the video-only file.
