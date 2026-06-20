@@ -236,12 +236,47 @@ def get_ffmpeg_executables():
             _FFMPEG_EXECUTABLES = (None, None)
     return _FFMPEG_EXECUTABLES
 
-def ensure_ffmpeg_available():
+def _download_file_with_progress(url, local_path, progress_callback):
+    """Download ``url`` to ``local_path`` reporting progress as it streams.
+
+    ``progress_callback`` is invoked as ``progress_callback(downloaded_bytes,
+    total_bytes)``; ``total_bytes`` is 0 when the server does not report a
+    content length. It is called once before any data is read so callers can
+    show an initial message, then after each chunk. Mirrors the signature of
+    static_ffmpeg's own ``download_file`` so it can stand in for it.
+    """
+    import requests
+
+    chunk_size = (1024 * 1024) // 4
+    with requests.get(url, stream=True, timeout=10 * 60) as req:
+        req.raise_for_status()
+        try:
+            total = int(req.headers.get("content-length", 0))
+        except (TypeError, ValueError):
+            total = 0
+        downloaded = 0
+        progress_callback(downloaded, total)
+        with open(local_path, "wb") as file_d:
+            for chunk in req.iter_content(chunk_size):
+                if not chunk:
+                    continue
+                file_d.write(chunk)
+                downloaded += len(chunk)
+                progress_callback(downloaded, total)
+    return local_path
+
+def ensure_ffmpeg_available(progress_callback=None):
     """Eagerly download/locate the bundled ffmpeg binaries.
 
     static-ffmpeg fetches the platform binaries on first use. Triggering that
     download up front (e.g. at application startup) means the user is told
     immediately if it fails, instead of silently losing audio later on.
+
+    When ``progress_callback`` is provided it is called as
+    ``progress_callback(downloaded_bytes, total_bytes)`` while the binaries are
+    being downloaded, so callers (e.g. the GUI) can surface that a download is
+    happening and how far along it is. It is not called when the binaries are
+    already cached locally.
 
     Returns None on success, or a human-readable error message string describing
     why the binaries could not be obtained.
@@ -249,7 +284,22 @@ def ensure_ffmpeg_available():
     global _FFMPEG_EXECUTABLES
     try:
         from static_ffmpeg import run as static_ffmpeg_run
-        executables = static_ffmpeg_run.get_or_fetch_platform_executables_else_raise()
+        if progress_callback is None:
+            executables = static_ffmpeg_run.get_or_fetch_platform_executables_else_raise()
+        else:
+            # static-ffmpeg has no progress hook, so temporarily swap in our
+            # progress-aware downloader. Extraction, caching and permissions are
+            # still handled by the library; we only intercept the download.
+            original_download = static_ffmpeg_run.download_file
+            static_ffmpeg_run.download_file = (
+                lambda url, local_path: _download_file_with_progress(
+                    url, local_path, progress_callback
+                )
+            )
+            try:
+                executables = static_ffmpeg_run.get_or_fetch_platform_executables_else_raise()
+            finally:
+                static_ffmpeg_run.download_file = original_download
     except Exception as error:
         return str(error)
     _FFMPEG_EXECUTABLES = executables

@@ -113,7 +113,44 @@ if __name__ == "__main__":
 
     # Download/locate the bundled ffmpeg binaries up front so the user is told
     # immediately if it fails, instead of silently losing audio when muxing.
-    ffmpeg_error = ensure_ffmpeg_available()
+    # When a download is needed, surface a progress window so the user knows the
+    # app is fetching ffmpeg and how far along it is.
+    ffmpeg_progress_window = None
+
+    def report_ffmpeg_download(downloaded_bytes, total_bytes):
+        global ffmpeg_progress_window
+        downloaded_mb = downloaded_bytes / (1024 * 1024)
+        if total_bytes > 0:
+            total_mb = total_bytes / (1024 * 1024)
+            message = "Downloading ffmpeg: {:.1f} MB / {:.1f} MB".format(
+                downloaded_mb, total_mb
+            )
+        else:
+            message = "Downloading ffmpeg: {:.1f} MB".format(downloaded_mb)
+
+        if ffmpeg_progress_window is None:
+            progress_layout = [
+                [sg.Text("Preparing ffmpeg (needed to keep audio in videos)...")],
+                [sg.Text(message, size=(45, 1), key="__FFMPEG_DL_TEXT__")],
+                [sg.ProgressBar(total_bytes or 1, orientation='h', size=(40, 20), key="__FFMPEG_DL_BAR__")],
+            ]
+            ffmpeg_progress_window = sg.Window(
+                "Preparing ffmpeg", progress_layout, finalize=True, keep_on_top=True
+            )
+
+        ffmpeg_progress_window["__FFMPEG_DL_TEXT__"].update(message)
+        if total_bytes > 0:
+            ffmpeg_progress_window["__FFMPEG_DL_BAR__"].update(
+                current_count=downloaded_bytes, max=total_bytes
+            )
+        ffmpeg_progress_window.refresh()
+
+    ffmpeg_error = ensure_ffmpeg_available(progress_callback=report_ffmpeg_download)
+
+    if ffmpeg_progress_window is not None:
+        ffmpeg_progress_window.close()
+        ffmpeg_progress_window = None
+
     if ffmpeg_error:
         sg.popup_error(
             "Could not prepare ffmpeg, which is needed to keep the audio track "
