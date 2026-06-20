@@ -1,10 +1,7 @@
 opencv-python
 numpy
 pillow
-
-# ffmpeg (external binary, not a pip package) is required to retain the
-# original audio track in corrected videos. Install it separately and make
-# sure it is available on your PATH.
+static-ffmpeg
 
 # Uncomment the following for building GUI
 

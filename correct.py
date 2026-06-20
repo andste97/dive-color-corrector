@@ -1,6 +1,5 @@
 import sys
 import os
-import shutil
 import subprocess
 import tempfile
 import numpy as np
@@ -216,13 +215,32 @@ def precompute_filter_matrices(frame_count, filter_indices, filter_matrices):
         interpolated_matrices[:, x] = np.interp(frame_numbers, filter_indices, filter_matrices[:, x])
     return interpolated_matrices
 
+_FFMPEG_EXECUTABLES = None
+
+def get_ffmpeg_executables():
+    """Return the (ffmpeg, ffprobe) executables bundled via static-ffmpeg.
+
+    The binaries are downloaded and cached locally on first use, so no
+    system-wide ffmpeg installation is required. Returns (None, None) if the
+    executables cannot be obtained.
+    """
+    global _FFMPEG_EXECUTABLES
+    if _FFMPEG_EXECUTABLES is None:
+        try:
+            from static_ffmpeg import run as static_ffmpeg_run
+            _FFMPEG_EXECUTABLES = static_ffmpeg_run.get_or_fetch_platform_executables_else_raise()
+        except Exception as error:
+            print("Could not obtain bundled ffmpeg ({}); output video will not contain audio.".format(error))
+            _FFMPEG_EXECUTABLES = (None, None)
+    return _FFMPEG_EXECUTABLES
+
 def has_audio_stream(video_path):
     """Detect whether the given video file contains an audio stream.
 
     Returns True if an audio stream is found, False if none is found, and None
-    when it cannot be determined (e.g. ffprobe is not installed).
+    when it cannot be determined (e.g. ffprobe is not available).
     """
-    ffprobe = shutil.which("ffprobe")
+    _, ffprobe = get_ffmpeg_executables()
     if not ffprobe:
         return None
     try:
@@ -237,7 +255,8 @@ def has_audio_stream(video_path):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30,
-    except OSError, subprocess.TimeoutExpired:
+        )
+    except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:
         return None
@@ -250,9 +269,9 @@ def mux_audio(corrected_video_path, original_video_path, output_path):
     otherwise. When False is returned the caller should fall back to using the
     corrected (video-only) file as the output.
     """
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg, _ = get_ffmpeg_executables()
     if not ffmpeg:
-        print("ffmpeg not found; output video will not contain audio.")
+        print("ffmpeg not available; output video will not contain audio.")
         return False
 
     # Skip muxing only when we can positively confirm the source has no audio.
