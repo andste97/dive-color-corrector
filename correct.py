@@ -48,7 +48,9 @@ def get_filter_matrix(mat):
     mat = cv2.resize(mat, (256, 256))
 
     # Get average values of RGB
-    avg_mat = np.array(cv2.mean(mat)[:3], dtype=np.uint8)
+    # Use float to avoid uint8 clipping/quantization of the average color,
+    # which would otherwise reduce precision of the hue search below.
+    avg_mat = np.array(cv2.mean(mat)[:3], dtype=np.float32)
     
     # Find hue shift so that average red reaches MIN_AVG_RED
     new_avg_r = avg_mat[0]
