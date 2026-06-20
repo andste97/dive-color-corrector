@@ -163,6 +163,8 @@ def analyze_video(input_video_path, output_video_path):
     filter_matrix_indexes = []
     filter_matrices = []
     count = 0
+    last_frame = None
+    last_frame_index = None
     
     print("Analyzing...")
     while(cap.isOpened()):
@@ -182,6 +184,9 @@ def analyze_video(input_video_path, output_video_path):
             # Otherwise this is just a faulty frame read, try reading next frame
             continue
 
+        last_frame = frame
+        last_frame_index = count
+
         # Pick filter matrix from every N seconds
         if count % (fps * SAMPLE_SECONDS) == 0:
             mat = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -191,6 +196,11 @@ def analyze_video(input_video_path, output_video_path):
         yield count
         
     cap.release()
+
+    if not filter_matrices and last_frame is not None:
+        mat = cv2.cvtColor(last_frame, cv2.COLOR_BGR2RGB)
+        filter_matrix_indexes.append(last_frame_index)
+        filter_matrices.append(get_filter_matrix(mat))
 
     # Build a interpolation function to get filter matrix at any given frame
     filter_matrices = np.array(filter_matrices)
@@ -205,7 +215,19 @@ def analyze_video(input_video_path, output_video_path):
     }
 
 def precompute_filter_matrices(frame_count, filter_indices, filter_matrices):
+    filter_indices = np.array(filter_indices)
+    filter_matrices = np.array(filter_matrices)
+    if len(filter_matrices) == 0:
+        raise ValueError("At least one filter matrix is required")
+
     filter_matrix_size = len(filter_matrices[0])
+    if len(filter_matrices) == 1:
+        return np.repeat(filter_matrices, frame_count, axis=0)
+
+    sort_order = np.argsort(filter_indices)
+    filter_indices = filter_indices[sort_order]
+    filter_matrices = filter_matrices[sort_order]
+
     frame_numbers = np.arange(frame_count)
     interpolated_matrices = np.zeros((frame_count, filter_matrix_size))
     for x in range(filter_matrix_size):
@@ -251,7 +273,8 @@ def process_video(video_data, yield_preview=False):
 
         # Apply the filter using precomputed matrix
         rgb_mat = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        corrected_mat = apply_filter(rgb_mat, interpolated_matrices[count - 1])
+        matrix_index = min(count - 1, interpolated_matrices.shape[0] - 1)
+        corrected_mat = apply_filter(rgb_mat, interpolated_matrices[matrix_index])
         corrected_mat = cv2.cvtColor(corrected_mat, cv2.COLOR_RGB2BGR)
         new_video.write(corrected_mat)
 
