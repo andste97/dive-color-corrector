@@ -306,62 +306,67 @@ def process_video(video_data, yield_preview=False):
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     new_video = cv2.VideoWriter(temp_video_path, fourcc, fps, (frame_width, frame_height))
 
-    # Precompute interpolated filter matrices
-    print("Precomputing filter matrices...")
-    interpolated_matrices = precompute_filter_matrices(
-        frame_count, video_data["filter_indices"], np.array(video_data["filters"])
-    )
+    try:
+        # Precompute interpolated filter matrices
+        print("Precomputing filter matrices...")
+        interpolated_matrices = precompute_filter_matrices(
+            frame_count, video_data["filter_indices"], np.array(video_data["filters"])
+        )
 
-    print("Processing...")
-    count = 0
-    while cap.isOpened():
-        count += 1
-        percent = 100 * count / frame_count
-        print("{:.2f}%".format(percent), end="\r")
-        ret, frame = cap.read()
-        
-        if not ret:
-            # End video read if we have gone beyond reported frame count
-            if count >= frame_count:
-                break
+        print("Processing...")
+        count = 0
+        while cap.isOpened():
+            count += 1
+            percent = 100 * count / frame_count
+            print("{:.2f}%".format(percent), end="\r")
+            ret, frame = cap.read()
 
-            # Failsafe to prevent an infinite loop
-            if count >= 1e6:
-                break
+            if not ret:
+                # End video read if we have gone beyond reported frame count
+                if count >= frame_count:
+                    break
 
-            # Otherwise this is just a faulty frame read, try reading next
-            continue
+                # Failsafe to prevent an infinite loop
+                if count >= 1e6:
+                    break
 
-        # Apply the filter using precomputed matrix
-        rgb_mat = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        corrected_mat = apply_filter(rgb_mat, interpolated_matrices[count - 1])
-        corrected_mat = cv2.cvtColor(corrected_mat, cv2.COLOR_RGB2BGR)
-        new_video.write(corrected_mat)
+                # Otherwise this is just a faulty frame read, try reading next
+                continue
 
-        if yield_preview:
-            preview = frame.copy()
-            width = preview.shape[1] // 2
-            height = preview.shape[0] // 2
-            preview[:, width:] = corrected_mat[:, width:]
+            # Apply the filter using precomputed matrix
+            rgb_mat = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            corrected_mat = apply_filter(rgb_mat, interpolated_matrices[count - 1])
+            corrected_mat = cv2.cvtColor(corrected_mat, cv2.COLOR_RGB2BGR)
+            new_video.write(corrected_mat)
 
-            preview = cv2.resize(preview, (width, height))
+            if yield_preview:
+                preview = frame.copy()
+                width = preview.shape[1] // 2
+                height = preview.shape[0] // 2
+                preview[:, width:] = corrected_mat[:, width:]
 
-            yield percent, cv2.imencode('.png', preview)[1].tobytes()
+                preview = cv2.resize(preview, (width, height))
+
+                yield percent, cv2.imencode('.png', preview)[1].tobytes()
+            else:
+                yield None
+
+        cap.release()
+        new_video.release()
+
+        # Mux the original audio back into the corrected video. If that is not
+        # possible (no ffmpeg, no audio track, or an ffmpeg error), fall back to
+        # the video-only file.
+        if mux_audio(temp_video_path, video_data["input_video_path"], output_video_path):
+            os.remove(temp_video_path)
         else:
-            yield None
-
-    
-
-    cap.release()
-    new_video.release()
-
-    # Mux the original audio back into the corrected video. If that is not
-    # possible (no ffmpeg, no audio track, or an ffmpeg error), fall back to the
-    # video-only file.
-    if mux_audio(temp_video_path, video_data["input_video_path"], output_video_path):
-        os.remove(temp_video_path)
-    else:
-        os.replace(temp_video_path, output_video_path)
+            os.replace(temp_video_path, output_video_path)
+    finally:
+        cap.release()
+        new_video.release()
+        # Remove the temporary file if it is still around (e.g. after an error).
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
 
 
 if __name__ == "__main__":
