@@ -141,7 +141,7 @@ def test_mux_audio_returns_false_when_ffmpeg_unavailable(tmp_path, monkeypatch):
     assert result is False
 
 
-def test_download_file_with_progress_reports_bytes(tmp_path, monkeypatch):
+def test_ensure_ffmpeg_available_forwards_progress_callback(monkeypatch):
     chunks = [b"a" * 100, b"b" * 50]
 
     class _FakeResponse:
@@ -162,52 +162,29 @@ def test_download_file_with_progress_reports_bytes(tmp_path, monkeypatch):
     import requests
     monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResponse())
 
-    local_path = str(tmp_path / "ffmpeg.zip")
-    progress = []
-    returned = correct._download_file_with_progress(
-        "http://example/ffmpeg.zip", local_path, lambda d, t: progress.append((d, t))
-    )
-
-    assert returned == local_path
-    # Initial 0-byte call followed by one call per chunk.
-    assert progress == [(0, 150), (100, 150), (150, 150)]
-    with open(local_path, "rb") as f:
-        assert f.read() == b"".join(chunks)
-
-
-def test_ensure_ffmpeg_available_forwards_progress_callback(monkeypatch):
-    captured = {}
-
     class _FakeRun:
-        @staticmethod
-        def download_file(url, local_path):
-            return local_path
+        download_file = staticmethod(lambda url, local_path: local_path)
 
         @staticmethod
         def get_or_fetch_platform_executables_else_raise():
             # Simulate the library invoking its (now patched) downloader.
-            _FakeRun.download_file("http://example/ffmpeg.zip", "/tmp/ffmpeg.zip")
-            return ("/tmp/ffmpeg", "/tmp/ffprobe")
+            _FakeRun.download_file("http://example/ffmpeg.zip", os.devnull)
+            return ("ffmpeg", "ffprobe")
 
+    original_download = _FakeRun.download_file
     fake_static_ffmpeg = types.ModuleType("static_ffmpeg")
     fake_static_ffmpeg.run = _FakeRun
     monkeypatch.setitem(sys.modules, "static_ffmpeg", fake_static_ffmpeg)
-
-    def fake_download(url, local_path, progress_callback):
-        progress_callback(0, 200)
-        progress_callback(200, 200)
-        return local_path
-
-    monkeypatch.setattr(correct, "_download_file_with_progress", fake_download)
     monkeypatch.setattr(correct, "_FFMPEG_EXECUTABLES", None)
 
     calls = []
     error = correct.ensure_ffmpeg_available(progress_callback=lambda d, t: calls.append((d, t)))
 
     assert error is None
-    assert calls == [(0, 200), (200, 200)]
+    # The downloader streamed the file and reported byte progress.
+    assert calls == [(0, 150), (100, 150), (150, 150)]
     # The original download_file must be restored after the call.
-    assert _FakeRun.download_file("u", "p") == "p"
+    assert _FakeRun.download_file is original_download
 
 
 def test_ensure_ffmpeg_available_returns_error_message(monkeypatch):
