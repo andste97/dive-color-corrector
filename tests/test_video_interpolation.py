@@ -6,7 +6,6 @@ interpolated to every frame.
 """
 
 import numpy as np
-import pytest
 
 import correct
 
