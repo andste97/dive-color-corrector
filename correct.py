@@ -236,6 +236,25 @@ def get_ffmpeg_executables():
             _FFMPEG_EXECUTABLES = (None, None)
     return _FFMPEG_EXECUTABLES
 
+def ensure_ffmpeg_available():
+    """Eagerly download/locate the bundled ffmpeg binaries.
+
+    static-ffmpeg fetches the platform binaries on first use. Triggering that
+    download up front (e.g. at application startup) means the user is told
+    immediately if it fails, instead of silently losing audio later on.
+
+    Returns None on success, or a human-readable error message string describing
+    why the binaries could not be obtained.
+    """
+    global _FFMPEG_EXECUTABLES
+    try:
+        from static_ffmpeg import run as static_ffmpeg_run
+        executables = static_ffmpeg_run.get_or_fetch_platform_executables_else_raise()
+    except Exception as error:
+        return str(error)
+    _FFMPEG_EXECUTABLES = executables
+    return None
+
 def has_audio_stream(video_path):
     """Detect whether the given video file contains an audio stream.
 
@@ -410,6 +429,19 @@ def process_video(video_data, yield_preview=False):
         # generator one step per loop iteration), so the window stays responsive
         # while ffmpeg runs. If muxing is not possible (no ffmpeg, no audio
         # track, or an ffmpeg error) we fall back to the video-only file.
+        ffmpeg, _ = get_ffmpeg_executables()
+        if not ffmpeg:
+            # ffmpeg could not be obtained, so the corrected (video-only) file
+            # is the best we can produce. Surface this to the GUI so the user
+            # knows why their output has no audio.
+            print("ffmpeg not found; output video will not contain audio.")
+            os.replace(temp_video_path, output_video_path)
+            if yield_preview:
+                yield "ffmpeg not found - saved video without audio", None
+            else:
+                yield None
+            return
+
         mux_future = mux_audio_async(
             temp_video_path, video_data["input_video_path"], output_video_path
         )

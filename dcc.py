@@ -1,6 +1,6 @@
 import PySimpleGUI as sg
 import os
-from correct import correct_image, analyze_video, process_video
+from correct import correct_image, analyze_video, process_video, ensure_ffmpeg_available
 import webbrowser
 from logo.logo import LOGO
 
@@ -110,6 +110,19 @@ process_video_generator = None
 
 
 if __name__ == "__main__":
+
+    # Download/locate the bundled ffmpeg binaries up front so the user is told
+    # immediately if it fails, instead of silently losing audio when muxing.
+    ffmpeg_error = ensure_ffmpeg_available()
+    if ffmpeg_error:
+        sg.popup_error(
+            "Could not prepare ffmpeg, which is needed to keep the audio track "
+            "in corrected videos.\n\n"
+            "Videos will still be color corrected, but the output may have no "
+            "audio.\n\n"
+            "Details: {}".format(ffmpeg_error),
+            title="ffmpeg setup failed",
+        )
 
     while True:
         
