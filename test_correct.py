@@ -44,9 +44,9 @@ def test_get_filter_matrix_uses_float_average(monkeypatch):
     assert not np.allclose(avg, np.round(avg))
 
 
-def test_float_average_changes_hue_search_outcome():
-    # Demonstrate that uint8 truncation of the average could change the hue
-    # shift selected by the search, and that the float version is more precise.
+def test_hue_search_runs_on_float_and_uint8_averages():
+    # Exercise the hue-search loop on both float and uint8 averages via the
+    # production cv2.mean() path; both should run without error.
     import cv2
 
     img = _solid_image(20, 128, 118)
