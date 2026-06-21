@@ -161,7 +161,8 @@ def analyze_video(input_video_path, output_video_path):
     
     # Initialize new video writer
     cap = cv2.VideoCapture(input_video_path)
-    fps = math.ceil(cap.get(cv2.CAP_PROP_FPS))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    sample_interval = max(1, round(fps * SAMPLE_SECONDS)) if fps > 0 else 1
     frame_count = math.ceil(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
     # Get filter matrices for every 10th frame
@@ -188,7 +189,7 @@ def analyze_video(input_video_path, output_video_path):
             continue
 
         # Pick filter matrix from every N seconds
-        if count % (fps * SAMPLE_SECONDS) == 0:
+        if count % sample_interval == 0:
             mat = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             filter_matrix_indexes.append(count) 
             filter_matrices.append(get_filter_matrix(mat))

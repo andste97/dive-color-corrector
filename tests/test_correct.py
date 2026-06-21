@@ -12,9 +12,35 @@ import types
 import unittest
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 import correct
+
+
+class AnalyzeVideoTests(unittest.TestCase):
+    def test_preserves_fractional_fps_and_uses_integer_sampling_interval(self):
+        frame = np.zeros((2, 2, 3), dtype=np.uint8)
+        capture = MagicMock()
+        capture.get.side_effect = lambda prop: {
+            correct.cv2.CAP_PROP_FPS: 29.97,
+            correct.cv2.CAP_PROP_FRAME_COUNT: 60,
+        }.get(prop, 0)
+        capture.isOpened.return_value = True
+        capture.read.side_effect = [(True, frame)] * 60 + [(False, None)]
+        filter_matrix = np.arange(20)
+
+        with patch.object(correct.cv2, "VideoCapture", return_value=capture):
+            with patch.object(correct, "get_filter_matrix", return_value=filter_matrix):
+                with patch("builtins.print"):
+                    final_result = list(
+                        correct.analyze_video("in.mp4", "out.mp4")
+                    )[-1]
+
+        self.assertEqual(final_result["fps"], 29.97)
+        self.assertEqual(final_result["filter_indices"], [60])
+        np.testing.assert_array_equal(final_result["filters"], [filter_matrix])
+        capture.release.assert_called_once()
 
 
 def _make_source_video(path, ffmpeg, with_audio):
