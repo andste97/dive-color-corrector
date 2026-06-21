@@ -98,3 +98,12 @@ def test_correct_boosts_red_channel(underwater_rgb):
     corrected = correct.correct(underwater_rgb)
     avg_red_after = float(corrected[..., 2].mean())
     assert avg_red_after > avg_red_before
+
+
+def test_get_filter_matrix_handles_flat_image():
+    # A solid-color (flat) image has zero range in every channel, which used
+    # to raise a ZeroDivisionError when computing the per-channel gains.
+    flat = np.full((64, 64, 3), 50, dtype=np.uint8)
+    filt = correct.get_filter_matrix(flat)
+    assert filt.shape == (20,)
+    assert np.all(np.isfinite(filt))

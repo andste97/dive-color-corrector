@@ -102,9 +102,17 @@ def get_filter_matrix(mat):
     shifted = hue_shift_red(np.array([1, 1, 1]), hue_shift)
     shifted_r, shifted_g, shifted_b = shifted[0][0]
 
-    red_gain = 256 / (adjust_r_high - adjust_r_low)
-    green_gain = 256 / (adjust_g_high - adjust_g_low)
-    blue_gain = 256 / (adjust_b_high - adjust_b_low)
+    def safe_gain(adjust_high, adjust_low):
+        # Guard against zero (or negative) ranges, which occur for flat or
+        # low-contrast channels and would otherwise raise a ZeroDivisionError.
+        adjust_range = adjust_high - adjust_low
+        if adjust_range <= 0:
+            return 1.0
+        return 256 / adjust_range
+
+    red_gain = safe_gain(adjust_r_high, adjust_r_low)
+    green_gain = safe_gain(adjust_g_high, adjust_g_low)
+    blue_gain = safe_gain(adjust_b_high, adjust_b_low)
 
     redOffset = (-adjust_r_low / 256) * red_gain
     greenOffset = (-adjust_g_low / 256) * green_gain
