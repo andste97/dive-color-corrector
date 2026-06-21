@@ -107,6 +107,7 @@ def get_filter_matrix(mat):
         # low-contrast channels and would otherwise raise a ZeroDivisionError.
         adjust_range = adjust_high - adjust_low
         if adjust_range <= 0:
+            # No contrast to normalize: use unit gain to leave the channel unchanged.
             return 1.0
         return 256 / adjust_range
 
