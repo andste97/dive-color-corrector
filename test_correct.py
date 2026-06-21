@@ -16,7 +16,8 @@ def test_hue_shift_red_preserves_float_precision():
     # A fractional average color should not be quantized to integers.
     avg = np.array([12.7, 130.4, 120.9], dtype=np.float32)
     shifted = correct.hue_shift_red(avg, 0)
-    # With hue_shift 0 the red output is just 0.299 * red, which is fractional.
+    # With hue_shift 0 the red coefficient is 1.0, so the red output equals the
+    # input red (12.7), which is fractional.
     assert np.issubdtype(shifted.dtype, np.floating)
     assert not np.allclose(shifted, np.round(shifted))
 
