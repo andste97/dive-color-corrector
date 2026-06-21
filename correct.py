@@ -119,7 +119,7 @@ def get_filter_matrix(mat, adjust_green=True):
 
     # When green adjustment is disabled, leave the green channel untouched by
     # making its row an identity (unity gain, no offset) instead of applying the
-    # white-balance normalisation.
+    # white-balance normalization.
     if not adjust_green:
         green_gain = 1
         greenOffset = 0
@@ -131,7 +131,7 @@ def get_filter_matrix(mat, adjust_green=True):
     return np.array([
         # Red is reconstructed from a hue-shifted R/G/B mix, so it carries
         # cross-terms. Green and blue are physically present in the image and
-        # only need white-balance normalisation (gain + offset), so their
+        # only need white-balance normalization (gain + offset), so their
         # cross-terms are intentionally zero. apply_filter treats all three rows
         # symmetrically, so these zeros are honoured rather than assumed.
         adjust_red, adjust_red_green, adjust_red_blue, 0, redOffset,
@@ -504,7 +504,7 @@ if __name__ == "__main__":
         adjust_green = False
         args = [a for a in args if a != "--no-green-adjust"]
 
-    if len(args) < 1:
+    if len(args) < 3:
         print("Usage")
         print("-"*20)
         print("For image:")
