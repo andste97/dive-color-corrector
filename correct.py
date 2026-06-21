@@ -133,7 +133,7 @@ def get_filter_matrix(mat, adjust_green=True):
         # cross-terms. Green and blue are physically present in the image and
         # only need white-balance normalization (gain + offset), so their
         # cross-terms are intentionally zero. apply_filter treats all three rows
-        # symmetrically, so these zeros are honoured rather than assumed.
+        # symmetrically, so these zeros are honored rather than assumed.
         adjust_red, adjust_red_green, adjust_red_blue, 0, redOffset,
         0, green_gain, 0, 0, greenOffset,
         0, 0, blue_gain, 0, blueOffset,
