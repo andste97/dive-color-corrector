@@ -42,10 +42,17 @@ def normalizing_interval(array):
     return (low, high)
 
 def apply_filter(mat, filt):
+    # ``filt`` is a 4x5 color matrix (flattened, row-major) applied uniformly to
+    # every output channel: out_c = R*filt[c,0] + G*filt[c,1] + B*filt[c,2] + filt[c,4]*255.
+    # Treating green and blue symmetrically with red means cross-term slots in the
+    # matrix are always honored instead of being silently dropped.
+    r = mat[..., 0]
+    g = mat[..., 1]
+    b = mat[..., 2]
     filtered_mat = np.zeros_like(mat, dtype=np.float32)
-    filtered_mat[..., 0] = mat[..., 0] * filt[0] + mat[..., 1] * filt[1] + mat[..., 2] * filt[2] + filt[4] * 255
-    filtered_mat[..., 1] = mat[..., 1] * filt[6] + filt[9] * 255
-    filtered_mat[..., 2] = mat[..., 2] * filt[12] + filt[14] * 255
+    filtered_mat[..., 0] = r * filt[0] + g * filt[1] + b * filt[2] + filt[4] * 255
+    filtered_mat[..., 1] = r * filt[5] + g * filt[6] + b * filt[7] + filt[9] * 255
+    filtered_mat[..., 2] = r * filt[10] + g * filt[11] + b * filt[12] + filt[14] * 255
     return np.clip(filtered_mat, 0, 255).astype(np.uint8)
 
 def get_filter_matrix(mat):
@@ -115,6 +122,11 @@ def get_filter_matrix(mat):
     adjust_red_blue = shifted_b * red_gain * BLUE_MAGIC_VALUE
 
     return np.array([
+        # Red is reconstructed from a hue-shifted R/G/B mix, so it carries
+        # cross-terms. Green and blue are physically present in the image and
+        # only need white-balance normalisation (gain + offset), so their
+        # cross-terms are intentionally zero. apply_filter treats all three rows
+        # symmetrically, so these zeros are honoured rather than assumed.
         adjust_red, adjust_red_green, adjust_red_blue, 0, redOffset,
         0, green_gain, 0, 0, greenOffset,
         0, 0, blue_gain, 0, blueOffset,
