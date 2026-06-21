@@ -55,7 +55,7 @@ def apply_filter(mat, filt):
     filtered_mat[..., 2] = r * filt[10] + g * filt[11] + b * filt[12] + filt[14] * 255
     return np.clip(filtered_mat, 0, 255).astype(np.uint8)
 
-def get_filter_matrix(mat):
+def get_filter_matrix(mat, adjust_green=True):
 
     mat = cv2.resize(mat, (256, 256))
 
@@ -117,6 +117,13 @@ def get_filter_matrix(mat):
     greenOffset = (-adjust_g_low / 256) * green_gain
     blueOffset = (-adjust_b_low / 256) * blue_gain
 
+    # When green adjustment is disabled, leave the green channel untouched by
+    # making its row an identity (unity gain, no offset) instead of applying the
+    # white-balance normalisation.
+    if not adjust_green:
+        green_gain = 1
+        greenOffset = 0
+
     adjust_red = shifted_r * red_gain
     adjust_red_green = shifted_g * red_gain
     adjust_red_blue = shifted_b * red_gain * BLUE_MAGIC_VALUE
@@ -133,17 +140,17 @@ def get_filter_matrix(mat):
         0, 0, 0, 1, 0,
     ])
 
-def correct(mat):
+def correct(mat, adjust_green=True):
     original_mat = mat.copy()
 
-    filter_matrix = get_filter_matrix(mat)
+    filter_matrix = get_filter_matrix(mat, adjust_green=adjust_green)
     
     corrected_mat = apply_filter(original_mat, filter_matrix)
     corrected_mat = cv2.cvtColor(corrected_mat, cv2.COLOR_RGB2BGR)
 
     return corrected_mat
 
-def correct_image(input_path, output_path):
+def correct_image(input_path, output_path, adjust_green=True):
     exif_data = None
     with Image.open(input_path) as image:
         exif_data = image.info.get("exif")
@@ -152,7 +159,7 @@ def correct_image(input_path, output_path):
         mat = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
     rgb_mat = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
-    corrected_mat = correct(rgb_mat)
+    corrected_mat = correct(rgb_mat, adjust_green=adjust_green)
 
     output_image = Image.fromarray(cv2.cvtColor(corrected_mat, cv2.COLOR_BGR2RGB))
     save_kwargs = {}
@@ -169,7 +176,7 @@ def correct_image(input_path, output_path):
     return cv2.imencode('.png', preview)[1].tobytes()
 
 
-def analyze_video(input_video_path, output_video_path):
+def analyze_video(input_video_path, output_video_path, adjust_green=True):
     
     # Initialize new video writer
     cap = cv2.VideoCapture(input_video_path)
@@ -203,7 +210,7 @@ def analyze_video(input_video_path, output_video_path):
         if count % (fps * SAMPLE_SECONDS) == 0:
             mat = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             filter_matrix_indexes.append(count) 
-            filter_matrices.append(get_filter_matrix(mat))
+            filter_matrices.append(get_filter_matrix(mat, adjust_green=adjust_green))
 
         yield count
         
@@ -489,27 +496,35 @@ def process_video(video_data, yield_preview=False):
 
 if __name__ == "__main__":
 
-    if len(sys.argv) < 2:
+    # Optional feature flag: by default the green channel is white-balanced
+    # (adjusted). Passing --no-green-adjust leaves the green channel untouched.
+    args = sys.argv[1:]
+    adjust_green = True
+    if "--no-green-adjust" in args:
+        adjust_green = False
+        args = [a for a in args if a != "--no-green-adjust"]
+
+    if len(args) < 1:
         print("Usage")
         print("-"*20)
         print("For image:")
-        print("$python correct.py image <source_image_path> <output_image_path>\n")
+        print("$python correct.py image <source_image_path> <output_image_path> [--no-green-adjust]\n")
         print("-"*20)
         print("For video:")
-        print("$python correct.py video <source_video_path> <output_video_path>\n")
+        print("$python correct.py video <source_video_path> <output_video_path> [--no-green-adjust]\n")
         exit(0)
 
-    if (sys.argv[1]) == "image":
-        mat = cv2.imread(sys.argv[2])
+    if (args[0]) == "image":
+        mat = cv2.imread(args[1])
         mat = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
         
-        corrected_mat = correct(mat)
+        corrected_mat = correct(mat, adjust_green=adjust_green)
 
-        cv2.imwrite(sys.argv[3], corrected_mat)
+        cv2.imwrite(args[2], corrected_mat)
     
     else:
 
-        for item in analyze_video(sys.argv[2], sys.argv[3]):
+        for item in analyze_video(args[1], args[2], adjust_green=adjust_green):
 
             if type(item) == dict:
                 video_data = item

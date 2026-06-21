@@ -28,6 +28,9 @@ left_column = [
         sg.InputText(default_text="corrected", size=(25, 1), key="__OUTPUT_PREFIX__")
     ],
     [
+        sg.Checkbox("Adjust green channel", default=True, key="__ADJUST_GREEN__")
+    ],
+    [
         sg.Button(button_text="Correct All", enable_events=True, pad=(10, 20), button_color='#cc4827', key="__CORRECT__"),
         sg.Button(button_text="Cancel", enable_events=True, pad=(5, 20), disabled=True, key="__CANCEL__"),
         sg.Button(button_text="Clear", enable_events=True, pad=(5, 20), disabled=False, key="__CLEAR_LIST__")
@@ -107,6 +110,7 @@ file_generator = None
 file_index = 0
 analyze_video_generator = None
 process_video_generator = None
+adjust_green = True
 
 
 if __name__ == "__main__":
@@ -176,6 +180,9 @@ if __name__ == "__main__":
         if event == "__CORRECT__":
             filepaths = [x for x in window["__INPUT_FILE_LIST__"].get_list_values()]
             file_generator = get_files(filepaths)
+
+            # Capture the green-channel feature flag for this run.
+            adjust_green = values["__ADJUST_GREEN__"]
 
             window["__CORRECT__"].update(disabled=True)
             window["__CANCEL__"].update(disabled=False)
@@ -262,12 +269,12 @@ if __name__ == "__main__":
                 extension = f[f.rfind("."):].lower() 
                 
                 if extension in IMAGE_TYPES:
-                    preview = correct_image(f, output_filepath)
+                    preview = correct_image(f, output_filepath, adjust_green=adjust_green)
                     window["__PREVIEW__"](data=preview)
                 
                 if extension in VIDEO_TYPES:
                     window["__STATUS__"].update("Analyzing")
-                    analyze_video_generator = analyze_video(f, output_filepath)
+                    analyze_video_generator = analyze_video(f, output_filepath, adjust_green=adjust_green)
             
             except StopIteration:
                 window["__STATUS__"].update("All done!")

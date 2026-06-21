@@ -130,6 +130,33 @@ def test_get_filter_matrix_returns_20_finite_values(underwater_rgb):
     assert np.all(np.isfinite(filt))
 
 
+def test_get_filter_matrix_adjust_green_disabled_keeps_green_identity(underwater_rgb):
+    # With green adjustment disabled the green row must be an identity transform
+    # (unity gain at index 6, zero offset at index 9), leaving green untouched.
+    filt = correct.get_filter_matrix(underwater_rgb, adjust_green=False)
+    assert filt[6] == 1
+    assert filt[9] == 0
+
+
+def test_get_filter_matrix_adjust_green_enabled_is_default(underwater_rgb):
+    # The flag defaults to True, preserving the existing white-balance behavior.
+    default = correct.get_filter_matrix(underwater_rgb)
+    enabled = correct.get_filter_matrix(underwater_rgb, adjust_green=True)
+    np.testing.assert_array_equal(default, enabled)
+
+
+def test_correct_adjust_green_disabled_preserves_green_channel():
+    # When green adjustment is off, the green channel should pass through
+    # unchanged. `correct` returns BGR, so green stays at channel index 1.
+    mat = np.dstack([
+        np.full((8, 8), 30, dtype=np.uint8),
+        np.full((8, 8), 120, dtype=np.uint8),
+        np.full((8, 8), 180, dtype=np.uint8),
+    ])
+    corrected = correct.correct(mat, adjust_green=False)
+    np.testing.assert_array_equal(corrected[..., 1], mat[..., 1])
+
+
 def test_correct_preserves_shape(underwater_rgb):
     corrected = correct.correct(underwater_rgb)
     assert corrected.shape == underwater_rgb.shape
