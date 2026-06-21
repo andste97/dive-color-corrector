@@ -78,10 +78,83 @@ def test_apply_filter_identity_like_matrix():
     np.testing.assert_array_equal(out, mat)
 
 
+def test_apply_filter_honors_green_and_blue_cross_terms():
+    # The matrix is applied symmetrically across all three output channels, so
+    # cross-terms in the green and blue rows must contribute (historically these
+    # slots were silently ignored for green/blue).
+    mat = np.dstack([
+        np.full((2, 2), 100, dtype=np.uint8),  # Red
+        np.full((2, 2), 50, dtype=np.uint8),   # Green
+        np.full((2, 2), 20, dtype=np.uint8),   # Blue
+    ])
+    filt = np.array([
+        1, 0, 0, 0, 0,
+        # Green out = R*0.5 + G*1 + B*0.25  -> 100*0.5 + 50 + 20*0.25 = 105
+        0.5, 1, 0.25, 0, 0,
+        # Blue out = R*0.1 + G*0.2 + B*1    -> 100*0.1 + 50*0.2 + 20 = 40
+        0.1, 0.2, 1, 0, 0,
+        0, 0, 0, 1, 0,
+    ], dtype=np.float32)
+    out = correct.apply_filter(mat, filt)
+    np.testing.assert_array_equal(out[..., 0], 100)
+    np.testing.assert_array_equal(out[..., 1], 105)
+    np.testing.assert_array_equal(out[..., 2], 40)
+
+
+def test_apply_filter_matches_full_color_matrix_multiply():
+    # apply_filter should equal a generic 4x5 color-matrix transform applied to
+    # [R, G, B, 1] (with the constant column scaled by 255), for every channel.
+    rng = np.random.default_rng(1)
+    mat = rng.integers(0, 256, size=(5, 7, 3), dtype=np.uint8)
+    filt = rng.uniform(-0.5, 1.0, size=20).astype(np.float32)
+
+    r = mat[..., 0].astype(np.float32)
+    g = mat[..., 1].astype(np.float32)
+    b = mat[..., 2].astype(np.float32)
+    expected = np.zeros_like(mat, dtype=np.float32)
+    for c in range(3):
+        base = c * 5
+        expected[..., c] = (
+            r * filt[base] + g * filt[base + 1] + b * filt[base + 2]
+            + filt[base + 4] * 255
+        )
+    expected = np.clip(expected, 0, 255).astype(np.uint8)
+
+    out = correct.apply_filter(mat, filt)
+    np.testing.assert_array_equal(out, expected)
+
+
 def test_get_filter_matrix_returns_20_finite_values(underwater_rgb):
     filt = correct.get_filter_matrix(underwater_rgb)
     assert filt.shape == (20,)
     assert np.all(np.isfinite(filt))
+
+
+def test_get_filter_matrix_adjust_green_disabled_keeps_green_identity(underwater_rgb):
+    # With green adjustment disabled the green row must be an identity transform
+    # (unity gain at index 6, zero offset at index 9), leaving green untouched.
+    filt = correct.get_filter_matrix(underwater_rgb, adjust_green=False)
+    assert filt[6] == 1
+    assert filt[9] == 0
+
+
+def test_get_filter_matrix_adjust_green_enabled_is_default(underwater_rgb):
+    # The flag defaults to True, preserving the existing white-balance behavior.
+    default = correct.get_filter_matrix(underwater_rgb)
+    enabled = correct.get_filter_matrix(underwater_rgb, adjust_green=True)
+    np.testing.assert_array_equal(default, enabled)
+
+
+def test_correct_adjust_green_disabled_preserves_green_channel():
+    # When green adjustment is off, the green channel should pass through
+    # unchanged. `correct` returns BGR, so green stays at channel index 1.
+    mat = np.dstack([
+        np.full((8, 8), 30, dtype=np.uint8),
+        np.full((8, 8), 120, dtype=np.uint8),
+        np.full((8, 8), 180, dtype=np.uint8),
+    ])
+    corrected = correct.correct(mat, adjust_green=False)
+    np.testing.assert_array_equal(corrected[..., 1], mat[..., 1])
 
 
 def test_correct_preserves_shape(underwater_rgb):
