@@ -1,4 +1,9 @@
 import sys
+import os
+import subprocess
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import cv2
 import math
@@ -213,6 +218,142 @@ def precompute_filter_matrices(frame_count, filter_indices, filter_matrices):
         interpolated_matrices[:, x] = np.interp(frame_numbers, filter_indices, filter_matrices[:, x])
     return interpolated_matrices
 
+_FFMPEG_EXECUTABLES = None
+
+def get_ffmpeg_executables():
+    """Return the (ffmpeg, ffprobe) executables bundled via static-ffmpeg.
+
+    The binaries are downloaded and cached locally on first use, so no
+    system-wide ffmpeg installation is required. Returns (None, None) if the
+    executables cannot be obtained.
+    """
+    global _FFMPEG_EXECUTABLES
+    if _FFMPEG_EXECUTABLES is None:
+        try:
+            from static_ffmpeg import run as static_ffmpeg_run
+            _FFMPEG_EXECUTABLES = static_ffmpeg_run.get_or_fetch_platform_executables_else_raise()
+        except Exception as error:
+            print("Could not obtain bundled ffmpeg ({}); output video will not contain audio.".format(error))
+            _FFMPEG_EXECUTABLES = (None, None)
+    return _FFMPEG_EXECUTABLES
+
+def ensure_ffmpeg_available(progress_callback=None):
+    """Eagerly download/locate the bundled ffmpeg binaries.
+
+    static-ffmpeg fetches the platform binaries on first use. Triggering that
+    download up front (e.g. at application startup) means the user is told
+    immediately if it fails, instead of silently losing audio later on.
+
+    When ``progress_callback`` is provided it is forwarded to
+    :class:`ffmpeg_downloader.FfmpegDownloader` and called as
+    ``progress_callback(downloaded_bytes, total_bytes)`` while the binaries are
+    downloading (not when they are already cached), so a GUI can show progress.
+
+    Returns None on success, or a human-readable error message string describing
+    why the binaries could not be obtained.
+    """
+    global _FFMPEG_EXECUTABLES
+    try:
+        from ffmpeg_downloader import FfmpegDownloader
+        _FFMPEG_EXECUTABLES = FfmpegDownloader(progress_callback).ensure_available()
+    except Exception as error:
+        return str(error)
+    return None
+
+def has_audio_stream(video_path):
+    """Detect whether the given video file contains an audio stream.
+
+    Returns True if an audio stream is found, False if none is found, and None
+    when it cannot be determined (e.g. ffprobe is not available).
+    """
+    _, ffprobe = get_ffmpeg_executables()
+    if not ffprobe:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                ffprobe, "-v", "error",
+                "-select_streams", "a",
+                "-show_entries", "stream=index",
+                "-of", "csv=p=0",
+                video_path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() != b""
+
+def mux_audio(corrected_video_path, original_video_path, output_path):
+    """Mux the audio track of the original video into the corrected (video-only) file.
+
+    Returns True if the audio was successfully muxed into output_path, False
+    otherwise. When False is returned the caller should fall back to using the
+    corrected (video-only) file as the output.
+    """
+    ffmpeg, _ = get_ffmpeg_executables()
+    if not ffmpeg:
+        print("ffmpeg not available; output video will not contain audio.")
+        return False
+
+    # Skip muxing only when we can positively confirm the source has no audio.
+    # When detection is unavailable, ffmpeg's optional "1:a?" mapping handles a
+    # missing audio track gracefully.
+    if has_audio_stream(original_video_path) is False:
+        return False
+
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg, "-y",
+                "-i", corrected_video_path,
+                "-i", original_video_path,
+                "-map", "0:v",
+                "-map", "1:a?",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-shortest",
+                output_path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print("Failed to run ffmpeg ({}); output video will not contain audio.".format(error))
+        return False
+
+    if result.returncode != 0:
+        err = result.stderr.decode("utf-8", errors="replace").strip()
+        print(f"ffmpeg failed to mux audio (exit {result.returncode}): {err}")
+        return False
+
+    return True
+
+def mux_audio_async(corrected_video_path, original_video_path, output_path):
+    """Run mux_audio on a background thread.
+
+    ffmpeg can take a while, and the GUI runs a single-threaded event loop, so
+    calling mux_audio() directly would freeze the window. Returning a Future
+    lets the caller keep yielding control back to the event loop (so the window
+    stays responsive) and apply the result once the work is finished.
+
+    The returned ThreadPoolExecutor is shut down (without waiting) once the
+    future completes, so the caller only needs to track the future.
+    """
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(
+        mux_audio, corrected_video_path, original_video_path, output_path
+    )
+    # Release the worker thread as soon as the job is done; cancel_futures is
+    # unnecessary because the single submitted task is the one we are awaiting.
+    future.add_done_callback(lambda _f: executor.shutdown(wait=False))
+    return future
+
 def process_video(video_data, yield_preview=False):
     cap = cv2.VideoCapture(video_data["input_video_path"])
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -220,58 +361,119 @@ def process_video(video_data, yield_preview=False):
     fps = video_data["fps"]
     frame_count = video_data["frame_count"]
 
+    output_video_path = video_data["output_video_path"]
+
+    # Write corrected frames to a temporary file first. OpenCV's VideoWriter
+    # cannot carry audio, so the original audio is muxed back in afterwards.
+    output_dir = os.path.dirname(os.path.abspath(output_video_path))
+    temp_fd, temp_video_path = tempfile.mkstemp(suffix=".mp4", dir=output_dir)
+    os.close(temp_fd)
+
     # Initialize VideoWriter
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    new_video = cv2.VideoWriter(video_data["output_video_path"], fourcc, fps, (frame_width, frame_height))
+    new_video = cv2.VideoWriter(temp_video_path, fourcc, fps, (frame_width, frame_height))
+    if not new_video.isOpened():
+        cap.release()
+        new_video.release()
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+        raise RuntimeError("Failed to open VideoWriter — check codec and output path")
 
-    # Precompute interpolated filter matrices
-    print("Precomputing filter matrices...")
-    interpolated_matrices = precompute_filter_matrices(
-        frame_count, video_data["filter_indices"], np.array(video_data["filters"])
-    )
+    try:
+        # Precompute interpolated filter matrices
+        print("Precomputing filter matrices...")
+        interpolated_matrices = precompute_filter_matrices(
+            frame_count, video_data["filter_indices"], np.array(video_data["filters"])
+        )
 
-    print("Processing...")
-    count = 0
-    while cap.isOpened():
-        count += 1
-        percent = 100 * count / frame_count
-        print("{:.2f}%".format(percent), end="\r")
-        ret, frame = cap.read()
-        
-        if not ret:
-            # End video read if we have gone beyond reported frame count
-            if count >= frame_count:
-                break
+        print("Processing...")
+        count = 0
+        while cap.isOpened():
+            count += 1
+            percent = 100 * count / frame_count
+            print("{:.2f}%".format(percent), end="\r")
+            ret, frame = cap.read()
 
-            # Failsafe to prevent an infinite loop
-            if count >= 1e6:
-                break
+            if not ret:
+                # End video read if we have gone beyond reported frame count
+                if count >= frame_count:
+                    break
 
-            # Otherwise this is just a faulty frame read, try reading next
-            continue
+                # Failsafe to prevent an infinite loop
+                if count >= 1e6:
+                    break
 
-        # Apply the filter using precomputed matrix
-        rgb_mat = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        corrected_mat = apply_filter(rgb_mat, interpolated_matrices[count - 1])
-        corrected_mat = cv2.cvtColor(corrected_mat, cv2.COLOR_RGB2BGR)
-        new_video.write(corrected_mat)
+                # Otherwise this is just a faulty frame read, try reading next
+                continue
 
-        if yield_preview:
-            preview = frame.copy()
-            width = preview.shape[1] // 2
-            height = preview.shape[0] // 2
-            preview[:, width:] = corrected_mat[:, width:]
+            # Apply the filter using precomputed matrix
+            rgb_mat = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            corrected_mat = apply_filter(rgb_mat, interpolated_matrices[count - 1])
+            corrected_mat = cv2.cvtColor(corrected_mat, cv2.COLOR_RGB2BGR)
+            new_video.write(corrected_mat)
 
-            preview = cv2.resize(preview, (width, height))
+            if yield_preview:
+                preview = frame.copy()
+                width = preview.shape[1] // 2
+                height = preview.shape[0] // 2
+                preview[:, width:] = corrected_mat[:, width:]
 
-            yield percent, cv2.imencode('.png', preview)[1].tobytes()
+                preview = cv2.resize(preview, (width, height))
+
+                yield percent, cv2.imencode('.png', preview)[1].tobytes()
+            else:
+                yield None
+
+        cap.release()
+        new_video.release()
+
+        # Mux the original audio back into the corrected video on a background
+        # thread. ffmpeg is blocking, so running it inline would freeze the
+        # single-threaded GUI event loop. Instead we kick it off asynchronously
+        # and keep yielding control back to the caller (the GUI advances this
+        # generator one step per loop iteration), so the window stays responsive
+        # while ffmpeg runs. If muxing is not possible (no ffmpeg, no audio
+        # track, or an ffmpeg error) we fall back to the video-only file.
+        ffmpeg, _ = get_ffmpeg_executables()
+        if not ffmpeg:
+            # ffmpeg could not be obtained, so the corrected (video-only) file
+            # is the best we can produce. Surface this to the GUI so the user
+            # knows why their output has no audio.
+            print("ffmpeg not found; output video will not contain audio.")
+            os.replace(temp_video_path, output_video_path)
+            if yield_preview:
+                yield "ffmpeg not found - saved video without audio", None
+            else:
+                yield None
+            return
+
+        mux_future = mux_audio_async(
+            temp_video_path, video_data["input_video_path"], output_video_path
+        )
+
+        mux_started_at = time.monotonic()
+        while not mux_future.done():
+            if yield_preview:
+                elapsed = int(time.monotonic() - mux_started_at)
+                # Animate the status so it is obvious the app is still alive.
+                dots = "." * (1 + elapsed % 3)
+                yield "Muxing audio{} ({}s)".format(dots, elapsed), None
+            else:
+                yield None
+            # Yield the GIL briefly so the worker thread makes progress and we
+            # do not spin too tightly between event-loop iterations.
+            time.sleep(0.05)
+
+        if mux_future.result():
+            os.remove(temp_video_path)
         else:
-            yield None
-
-    
-
-    cap.release()
-    new_video.release()
+            os.replace(temp_video_path, output_video_path)
+    finally:
+        cap.release()
+        new_video.release()
+        # Remove the temporary file if it is still around (e.g. after an error).
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
 
 
 if __name__ == "__main__":

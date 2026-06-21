@@ -14,6 +14,8 @@
 $ pip install -r requirements.txt
 ```
 
+> **Note:** The original audio track is kept in corrected videos using [ffmpeg](https://ffmpeg.org/), which is bundled automatically via the `static-ffmpeg` package (downloaded and cached on first use) — no system-wide ffmpeg installation is required. If the bundled ffmpeg cannot be obtained, the video is still corrected but the output will not contain audio.
+
 
 ### For images
 ```
@@ -23,6 +25,15 @@ $ python correct.py image /my/raw.png /my/corrected.png
 ### For videos
 ```
 $ python correct.py video /my/raw.mp4 /my/corrected.mp4
+```
+
+### Running the tests
+A unit test suite lives in the `tests/` directory and runs automatically on
+every push via GitHub Actions.
+
+```
+$ pip install -r requirements-dev.txt
+$ pytest
 ```
 
 ## GUI
